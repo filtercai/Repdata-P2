@@ -5,14 +5,254 @@ date: "Dec 26, 2015"
 output: html_document
 ---
 
-# Synopsis
+## Synopsis
+#todo#
+ 
+## 1.Data info and cleaning tactics
+### About the Data: 
+ - The source data come from the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+ - Download URL for this research: [Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
+ - The dataset is stored as csv format via bzip2 compress to reduce the size. There are total of 902297 rows and 37 columns in this csv file.
+ - For this research, We focus on weather event type, health and economic variables.
+
+### Cleanning tactics
+
+#### 1. Normalize the event type
+ The **EVTYPE** variables are human entered and do not have standard nameing. We need to normalize and merge the similar ones. But there are so many different event types names, from cost-benefit and accuracy. I will use below method to save the time and keep the accuracy.
+
+ * 1st time merge: Find the top 20 count EVTYPE, merger the semilar EVTYPE
+ * 2nd time merge: Find the top 20 fatalities and injuries number EVTYPE, merge the semilar EVTYPE
+ * 3rd time merge: Find the top 20 economic(prop and crop) loss number EVTYPE, merge the semilar EVTYPE
+
+#### 2. Economic loss 
+ The economic loss is data set are separate by damage(**PROPDMG** and **CROPDMG**) and the exponent (**PRODMGEXP** and **CROPDMGEXP**).
+
+ Treated the exponent values in form of characters as follows:    
+ * numbers(0,1,2...),       exp value = keep the numbers
+ * 'h/H' means hundred,     exp value = 2
+ * 'k/K' means 'thousand',  exp value = 3
+ * 'm/M' means 'million',   exp value = 6
+ * 'b/B',means billion,     exp value = 9
+ *  others, set exp value = 0 
+
+Compute economic loss in dollars as following:    
+ * CROPLOSS = CROPDMG * 10^CROPDMGEXP
+ * PROPLOSS = PROPDMG  * 10^PROPDMGEXP
+ * EconomicLOSS = CROPLOSS + PROPLOSS
 
 
+## 2. Data Processing 
 
-# Data Process
+### 2.1 load data and select the required column
+
+```{r load, cache=TRUE}
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", 
+              destfile = "StormData.csv.bz2")
+odata <- read.csv("StormData.csv.bz2",stringsAsFactors = FALSE)
+```
+
+ select only the data column related with **health** and *economic*, store them to the new dataframe ***sdata***.
+```{r select the required column, cache=TRUE}
+sdata <- odata[ , c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")]
+```
+
+ Because in EVTYPE merge method need find the top 20 economic loss, So need calculate it first.
+
+### 2.2 Economics loss calculate
+
+#### Clean and Process the exponent column
+
+````{r exponent summary}
+summary(as.factor(sdata$CROPDMGEXP))
+summary(as.factor(sdata$PROPDMGEXP))
+```
+
+There some issues value such as **'-','+','?','h','H'**, will set them to zero.
+
+```{r exponent convert}
+#Process CROPDMGEXP
+sdata$CROPDMGEXP <- gsub("^$","0",sdata$CROPDMGEXP)
+sdata$CROPDMGEXP <- gsub("\\?", "0", sdata$CROPDMGEXP)
+sdata$CROPDMGEXP <- gsub("k|K", "3", sdata$CROPDMGEXP)
+sdata$CROPDMGEXP <- gsub("m|M", "6", sdata$CROPDMGEXP)
+sdata$CROPDMGEXP <- gsub("b|B", "9", sdata$CROPDMGEXP)
+#Process PROPDMGEXP
+sdata$PROPDMGEXP <- gsub("^$|h|H","0",sdata$PROPDMGEXP)
+sdata$PROPDMGEXP <- gsub("\\?|\\+|\\-", "0", sdata$PROPDMGEXP)
+sdata$PROPDMGEXP <- gsub("k|K", "3", sdata$PROPDMGEXP)
+sdata$PROPDMGEXP <- gsub("m|M", "6", sdata$PROPDMGEXP)
+sdata$PROPDMGEXP <- gsub("b|B", "9", sdata$PROPDMGEXP)
+#convert to numeric
+sdata$CROPDMGEXP <- as.numeric(sdata$CROPDMGEXP)
+sdata$PROPDMGEXP <- as.numeric(sdata$PROPDMGEXP)
+```
+ 
+ check the result
+ 
+````{r exponent processed summary}
+summary(as.factor(sdata$CROPDMGEXP))
+summary(as.factor(sdata$PROPDMGEXP))
+```
+
+#### Calculate and store the loss in new column
+
+ Use below formula to calculate the loss value      
+ * CROPLOSS = CROPDMG * 10^CROPDMGEXP
+ * PROPLOSS = PROPDMG  * 10^PROPDMGEXP
+ * EconomicLOSS = CROPLOSS + PROPLOSS
 
 
-# Results
+```{r calculate the economic loss}
+#calculate CROPDMG & PROPDMG loss for each event seperately
+sdata$ecoloss.crop <- sdata$CROPDMG*(10^sdata$CROPDMGEXP)
+sdata$ecoloss.prop <- sdata$PROPDMG*(10^sdata$PROPDMGEXP)
+sdata$ecoloss <- sdata$ecoloss.crop + sdata$ecoloss.prop
+```
 
+### 2.3 EVTYPE cleaning
 
-# Reference
+#### 2.3.1 1st merge similar EVTYPE in top 20 count
+ Find the top 20 count EVTYPE
+```{r 1st fount top 20 count}
+sum1 <- summary(as.factor(sdata$EVTYPE),20)
+sum1
+```
+
+ Find be low merge relations:
+
+ * **WIND** type, include below EVTYPE:  
+    `r names(sum1)[grepl("WIND",names(sum1),ignore.case = T)]`
+ * **FLOOD** TYPE, include below EVTYPE:   
+    `r names(sum1)[grepl("FLOOD|RAIN|FLD",names(sum1),ignore.case = T)]`
+ * **TORNADO** TYPE, include below EVTYPE:    
+    `r names(sum1)[grepl("FUNNEL CLOUD|TORNADO|WATERSPOUT",names(sum1),ignore.case=T)]`
+ * **WINTER** TYPE, include below EVTYPE:   
+    `r names(sum1)[grepl("WINTER|SNOW",names(sum1),ignore.case = T)]`
+
+```{r 1st merge}
+sdata$EVTYPE <- gsub(".*WIND|.*WINDS|WIND.*","WIND", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub(".*FLOOD|FLOOD.*|HEAVY RAIN|.*STREAM FLD","FLOOD", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub("FUNNEL CLOUD|.*TORNADO|.*TORNADO.*|WATERSPOUT","TORNADO", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub("WINTER.*|.*WINTER.*","WINTER",sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub(".*SNOW|.*SNOW.*","WINTER",sdata$EVTYPE, ignore.case = TRUE)
+```
+
+#### 2.3.2 2nd merge similar EVTYPE in top 20 fatalities plus injuries
+ Find the top 20 fatalities plus injuries EVTYPE
+```{r 2nd fount top 20 count}
+sdata$FJTotal <- sdata$FATALITIES + sdata$INJURIES
+FJByEvtype <- aggregate(FJTotal ~ EVTYPE, sdata, sum)
+sum2df <- head(FJByEvtype[order(-FJByEvtype$FJTotal), ], 20)
+sum2 <- sum2df$FJTotal
+names(sum2) <- sum2df$EVTYPE
+sum2
+```
+
+ Find be low merge relations:
+
+ * **HEAT** type, include below EVTYPE:  
+    `r names(sum2)[grepl("HEAT",names(sum2),ignore.case = T)]`
+ * **WINTER** TYPE, include below EVTYPE:   
+    `r names(sum2)[grepl("COLD|BLIZZARD",names(sum2),ignore.case = T)]`
+ * **HURRICANE** TYPE, include below EVTYPE:    
+    `r names(sum2)[grepl("HURRICANE|TROPICAL STORM|TYPHOON",names(sum2),ignore.case=T)]`
+ * **RIP CURRENT** TYPE, include below EVTYPE:   
+   `r names(sum2)[grepl("RIP CURRENT",names(sum2),ignore.case=T)]`
+
+```{r 2nd merge}
+sdata$EVTYPE <- gsub(".*HEAT|HEAT.*|.*HEAT.*","HEAT", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub(".*COLD|BLIZZARD|ICE STORM","WINTER", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub("HURRICAN.*|.*HURRICANE.*","HURRICANE", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub("*TYPHOON|TROPICAL STORM","HURRICANE", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub("RIP CURRENTS", "RIP CURRENT", sdata$EVTYPE, ignore.case = TRUE)
+```
+
+#### 2.3.3 3rd merge similar EVTYPE in top 20 ecomonic loss
+ Find the top 20 economic loss EVTYPE  
+```{r 3rd fount top 20 count}
+EcolossByEvtype <- aggregate(ecoloss ~ EVTYPE, sdata, sum)
+sum3df <- head(EcolossByEvtype[order(-EcolossByEvtype$ecoloss), ], 20)
+sum3 <- sum3df$ecoloss
+names(sum3) <- sum3df$EVTYPE
+sum3
+```
+
+ Find be low merge relations:
+
+ * **FLOOD** type, include below EVTYPE:    
+    `r names(sum3)[grepl("FLOOD",names(sum3),ignore.case = T)]`
+ * **WILDFIRE** type, include below EVTYPE:    
+    `r names(sum3)[grepl("FIRE",names(sum3),ignore.case = T)]`
+ * **WIND, HAIL** type, it's conflict, will set this to HAIL    
+    `r names(sum3)[grepl("HAIL",names(sum3),ignore.case = T)]`
+  
+```{r 3rd merge}
+sdata$EVTYPE <- gsub("FLOOD.*","FLOOD", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub("WILD.*FIRE|WILD FIRES","WILD FIRE", sdata$EVTYPE, ignore.case = TRUE)
+sdata$EVTYPE <- gsub("WIND, HAIL","HAIL", sdata$EVTYPE, ignore.case = TRUE)
+```
+
+## 3. Get the top 10 event types  
+
+### 3.1 Top 10 event types respect to fatalities
+```{r top 10 fatalities}
+FatalitiesByEvtype <- aggregate(FATALITIES ~ EVTYPE, sdata, sum)
+FatalitiesTOP10 <- head(FatalitiesByEvtype[order(-FatalitiesByEvtype$FATALITIES), ], 10)
+FatalitiesTOP10
+```
+
+### 3.2 Top 10 event types respect to injuries
+```{r top 10 injuries}
+InjuriesByEvtype <- aggregate(INJURIES ~ EVTYPE, sdata, sum)
+InjuriesTOP10 <- head(InjuriesByEvtype[order(-InjuriesByEvtype$INJURIES), ], 10)
+InjuriesTOP10
+```
+
+### 3.3 Top 10 event types respect to economic loss
+```{r top 10 economic loss}
+EcolossByEvtype <- aggregate(ecoloss ~ EVTYPE, sdata, sum)
+EcolossTOP10 <- head(EcolossByEvtype[order(-EcolossByEvtype$ecoloss), ], 10)
+EcolossTOP10
+```
+
+## Results
+### Make plot for event types with population health
+ Make plots(**FataliesTOP10**, **InjuriesTOP10**) to show the Top 10 most harmful event types (**EVTYPE**) with respect to population health across the United States
+```{r histgram health, fig.width=12,fig.height=4}
+library(ggplot2)
+FatalitiesPlot <- ggplot(FatalitiesTOP10, aes(EVTYPE,FATALITIES)) + 
+  geom_histogram(stat = "identity") +
+  aes(reorder(EVTYPE,-FATALITIES), fill=FATALITIES) +
+  scale_fill_continuous("Fatalities Number", low="blue",high="red") +
+  xlab("Event Type") + ylab("Total Fatalities Number") +
+  ggtitle("Top 10 weather events cause fatalities")
+print(FatalitiesPlot)
+
+InjuriesPlot <- ggplot(InjuriesTOP10, aes(EVTYPE, INJURIES)) +
+  geom_histogram(stat = "identity") + 
+  aes(reorder(EVTYPE, -INJURIES),fill=INJURIES) +
+  scale_fill_continuous("Injuries Number", low="blue",high="red") +
+  xlab("Event Type") + ylab("Total Injuries Number") +
+  ggtitle("Top 10 weather events cause injuries")
+print(InjuriesPlot)
+```
+
+#####From the plot we can find the ***TORNADO** is the most servere event type related t population health
+
+### Make plot for event types with Economic loss
+ Make plots(**EconomicTOP10**) to show the Top 10 most harmful event types (**EVTYPE**) with respect to Economic loss across the United States
+```{r histgram ecoloss, fig.width=12,fig.height=4}
+EcolossTOP10$ecoloss.B <- EcolossTOP10$ecoloss / 10^9
+EcolossPlot <- ggplot(EcolossTOP10, aes(EVTYPE, ecoloss.B)) + 
+  geom_histogram(stat = "identity") +
+  aes(reorder(EVTYPE,-ecoloss.B), fill=-ecoloss.B) +
+  scale_fill_continuous("Loss in Billion", low="red", high="blue") +
+  xlab("Event Type") + ylab("Total Economic loss (Billion)") +
+  ggtitle("Top 10 weather events cause Economic loss")
+print(EcolossPlot)
+```
+
+#####from the plot we can find the ***FLOOD** is the most servere event type related to economic loss.
+
+## Somthing to be continue
+The event type merge method need optimized and more accuracy with the methods of scientific classification. If possible, We make a regular expression and program library can do this work repeatable and standardble. 
